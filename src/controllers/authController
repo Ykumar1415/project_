@@ -1,0 +1,106 @@
+const User = require('../models/User');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+
+// Signup a new user
+exports.signup = async (req, res) => {
+  try {
+    const { username, nameOfUser, contact, password } = req.body;
+
+    // Check if the user already exists
+    const existingUser = await User.findOne({ username });
+
+    if (existingUser) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
+
+    // Create a new user
+    const newUser = new User({
+      username,
+      nameOfUser,
+      contact,
+      password: await bcrypt.hash(password, 10), // Hash the password
+      approved: false, // New users are not approved by default
+    });
+
+    await newUser.save();
+
+    return res.status(201).json({ message: 'Signup successful. Waiting for admin approval.' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Login a user
+exports.login = async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // Check if the user exists
+    const user = await User.findOne({ username });
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    // Check if the user is approved
+    if (!user.approved) {
+      return res.status(403).json({ error: 'Your account needs to be approved by an admin' });
+    }
+
+    // Check the password
+    const passwordMatch = await bcrypt.compare(password, user.password);
+
+    if (!passwordMatch) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    // Generate a JWT token
+    const token = jwt.sign({ userId: user._id }, 'your-secret-key', { expiresIn: '1h' });
+    const refreshToken = jwt.sign({userId: user._id},'your-secret-key', { expiresIn: '3h' })
+
+    return res.status(200).json({ token: token, refreshToken: refreshToken });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+exports.refreshToken = async (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) {
+    return res.status(403).json({ error: 'Refresh token required' });
+  }
+
+  try {
+    // Verify the refresh token
+    jwt.verify(refreshToken, 'your-secret-key', async (err, decoded) => {
+      if (err) {
+        return res.status(401).json({ error: 'Invalid refresh token' });
+      }
+
+      // Check if the user exists
+      const user = await User.findById(decoded.userId);
+
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Check if the user is approved (you can add more checks as needed)
+      if (!user.approved) {
+        return res.status(403).json({ error: 'Your account needs to be approved by an admin' });
+      }
+
+      // Generate a new access token
+      const accessToken = jwt.sign({ userId: user._id }, 'your-access-token-secret', {
+        expiresIn: '1h', // Set your desired expiration time
+      });
+
+      return res.status(200).json({ accessToken });
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
